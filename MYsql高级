@@ -1,0 +1,324 @@
+
+Mysql调优
+1、查看mysql编码格式 
+show variables like 'character%';
+character_set_client为客户端编码方式；
+character_set_database数据库的编码；
+character_set_server数据库服务器的编码
+
+2、修改数据库的编码格式
+set character_set_client =utf8;//暂时的，仅限当前会话
+vi /etc/my.cnf  default-character-set=utf8//修改配置文件
+
+
+3、sql性能下降的原因
+sql语句写的烂，索引失效，关联查询太多join，服务器调优及参数设置。
+
+4、mysql机读的顺序
+5、join链接
+inner join 获取两表的共有部分
+left join 获取左表的全部
+right join 获取右表的全部
+left join where b.id is null 获取左表的独有部分
+right  join where a.id is null 获取右表的独有部分
+full out join 获取全部
+full out join where a.id is null or b.id is null 获取两表各自独有的部分
+
+union 合并,表、列全部相同才可以，并去重
+union all 全合并，不去重
+
+
+
+5、索引：帮助MYSQL高效获取数据的数据结构。排好序的快速查找的数据结构。
+索引本身也很大，一般以文件的形式存在磁盘上，Btree结构组织的数据结构。
+
+优点：1）提高数据检索的效率，降低数据库的IO成本；2）降低数据排序的成本，降低CPU的消耗。
+
+缺点：
+1）索引也是一张表，保存了主键和索引字段，并指向实体表的记录，所以也占用空间；
+	2）提高了查询速度，同时降低更新表的速度；
+3）索引只是提高效率的一个因素，如果数据过大，需要建立最有效的索引。
+
+索引类型：
+单值索引：包含一个单个列，一个表可以有多个单列索引。
+唯一索引：索引列的值必须唯一，但允许有空值；
+复合索引：一个索引包含了多个列；
+基本语法：
+create [unique] index indexName ON mytable(columnname(length));
+	alter mytable add [unique] index [indexName] on (columnname(length));
+	drop index [indexName] on mytable;
+	show index from  mytable \G; 
+索引的结构：
+BTree索引
+Hash索引
+Full-text索引
+R-Tree索引
+建立索引的条件
+1、主键自动建立
+2、频繁作为查询条件的字段创建
+3、外键建立索引
+4、频繁更新的字段不适合做索引
+5、Where用不到的不建索引
+6、单键/复合的选择，高并发倾向建组合索引
+7、查询中排序的字段，通过索引访问将大大提高排序速度。
+不需要建立索引的条件（300万性能开始下降）
+1、表记录太少；
+2、经常增删改的表；
+3、包含过多重复内容的字段建立索引没有意义。
+
+Mysql的常见瓶颈
+1、CPU：CPU在饱和的时候一般发生在数据装入内存或从磁盘上读取数据的时候
+2、IO：磁盘i/o瓶颈发生在装入数据远大于内存容量的时候
+3、服务器硬件瓶颈：top,free，iostat和vmstat来查看系统性能。
+
+EXPLAIN
+各个字段的含义
+Id ：id相同的情况下，由上而下执行。
+Id不同，子查询下，id序号会递增，id越大优先级越高，越先被执行。
+Select_type:主要区分普通查询，子查询，联合查询。
+Simple简单的select查询，不包含子查询或者union
+Primary:查询中若包含任何复杂的子部分，最外层查询则被标记为primary.
+Subquery:包含子查询；
+Derived：衍生表，在from列表中包含的子查询被标记为derived,mysql会递归执行这些子查询，把结果放在临时表中。
+Union：若第二个select出现在union之后，则标记为union;若union包含在from子句的子查询中，外层select则被标记为derived;
+Union result ：从union表获取结果的select。
+
+Type：执行顺序 system>const>eq_ref>ref>range>index>all;百万级数据开始优化索引，至少达到range级别，最好达到ref级别。
+System:表只有一行记录（等于系统表）,忽略不计；
+Const:表示通过索引一次就找到了，用于比较primary和unique索引。因为只匹配一行，所以很快。
+Eq_ref:唯一性索引扫描，对于每个索引建，表中只有一条记录与之匹配。常用于主键或者唯一索引扫描。
+Ref:非唯一性索引扫描，返回匹配某个单独值的所有行，本质上是一种索引访问。
+Range:只检索给定范围的行，使用索引来选择行，key列显示使用了哪个索引，一般在where语句中出现between,<,>,in等的查询，这种范围扫描索引比全表扫描好。
+Index:full index scan，index 和all的区别为index类型只遍历索引树，也是读全表。
+All:full table scan，遍历全表找到匹配行。
+
+Possible_keys:显示可能应用的索引，一个或者多个，但不一定被实际使用。
+Key:实际使用的索引。如果为null，则没有使用索引。
+Key_len:标识索引中使用的字节数，不损失精确性的情况下，长度越少越好。Key_len:显示的值是索引字段的最大可能长度，并非实际使用长度。
+Ref:显示索引的哪一列被使用的，如果可能的是一个常量。哪些列或者常量被用于查找索引列上的值。
+Rows:根据表统计信息及索引引用情况，大致估算出找到所需记录需要读取的行数。
+Extra:
+Using_filesort：mysql会对数据使用一个外部索引排序，而不是按照表内的索引顺序进行排序，mysql无法利用索引完成的排序操作称为文件排序；(需要优化)
+Using temporary:使用了临时表保存中间结果，MYSQL在对查询结果排序是使用临时表，常见于排序order by 和分组排序查询group by。（强烈需要优化）
+Using index:表示相应的select操作中使用了覆盖索引（covering index），避免访问了表的数据行，效率不错。
+如果同时出现了using where ,表明索引被用来执行索引键值的查找。
+如果没有同时出现using where，表明索引用来读取数据而非执行查找动作。
+覆盖索引（covering index）：select的数据列只用从索引中就能够获取到，不必读取数据行
+Using where:
+Using join buffle:
+Impossible where
+
+两表索引优化
+Left join 索引建在右表，因为左表是全部都有
+Right join 索引建在左表
+
+索引的原则：
+1、全值匹配好
+2、最佳左前缀原则；
+3、不在索引列上做任何操作（计算、函数、类型转换），会导致索引失效；
+4、存储引擎不能使用索引中范围条件右边的列（索引条件加范围以后，右侧的索引会失效）；
+5、尽量使用覆盖索引（索引列和查询列一致），减少select *；
+6、Mysql在使用不等于的时候无法使用索引
+7、Is null,is not null也无法使用索引；
+8、Like以通配符开头索引会失效，右边可以有通配符；如果一定需要加通配符查询，使用覆盖索引可以生效。
+9、字符串不加单引号索引失效；
+10、少用or,用它来链接查询条件时索引会失效；
+
+查询优化
+小表驱动大表的原则，在子查询作为条件查询时，如果A表大于B表，则用IN，如果A表小于B表用exists.
+Order by 优化：order by 支持index和filesort两种排序，index效率更高；
+Index排序：order by 使用索引最左前列；使用where子句与order by子句条件列组合满足索引最左前列，如果where使用索引的最左前缀定义为常量，则order by能使用索引；
+如果排序方向不一致不能使用索引；
+双路排序：取一批数据，要对磁盘进行两次扫描
+单路排序：从磁盘读取查询需要的所有列，按照order by 列在buffer对它们进行排序，然后扫描排序后列表进行输出，效率更快一些。如果所有字段都取出，总大小超出sort_buffer容量大小，反而效率更低了。
+排序优化策略：增大sort_buffer_size的大小，增大max_length_for_sort_data的大小。
+Group by 优化：实质是先排序后分组，遵照索引建的最佳左前缀；当无法使用索引列，增大max_length_for_sort_data参数的设置+增大sort_buffer_size参数的设置；where高于having,能写在where限定的条件就不要去having限定。
+
+慢查询日志：MYsql数据库没有开启慢查询日志，需要时开启；
+Show variables like ‘%slow_query_log%’;查询慢日志查询是否开启；slow_query_log值为off时代表禁用；
+通过设置该值来开启；set global slow_query_log=1;只对本次有效；
+永久生效必须修改配置文件，将路径和值写入my.cnf中，不建议。
+
+慢查询的标准是由long_query_time的值控制，默认为10秒；
+Show variables like ‘long_query_time%’;
+只有大于long_query_time值的sql才会被记录下来，而非大于等于；
+Set global long_query_time=3
+Show global variables like ‘long_query_time%’
+Show global status like ‘%slow_queries%’
+日志分析工具mysqldumpslow
+-s 按照那种方式排序 
+c：访问计数 
+l：锁定时间 
+r:返回记录 
+al：平均锁定时间 
+ar：平均访问记录数 
+at：平均查询时间 
+-t 是top n的意思，返回多少条数据。 
+-g 可以跟上正则匹配模式，大小写不敏感。
+
+创建函数，假如报错：this function has none of deterministic...
+#由于开启过慢查询日志，因为我们开启了bin-log,我们必须给function指定一个参数。
+Show variables like ‘log_bin_trust_function_creators’
+Set global log_bin_trust_function_creators=1
+
+创建函数
+Delimiter $$$ //设置sql结尾标识符
+Create function rand_string(n int) returns varchar(255) //创建函数
+Begin 
+Declare chars_str varchar(100) default ‘abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ’;//定义请求参数
+Declare return_str varchar(255) defult ‘’;//定义返回参数
+
+Declare i int default 0;
+While i<n DO
+Set return_str=concat(return_str,substring(chars_str,floor(1+rand()*52),1));
+Set i = i + 1;
+End while;
+Return return_str;
+End $$$
+
+创建存储过程
+Delimiter $$
+Create procedure insert_emp(in start int(10),in max_num int(10))
+Begin
+Declare i int default 0;
+Set autocommit = 0;
+Repeat
+Set i=i+1;
+Insert into emp(empno,ename,jon,mgr,hiredate,sal,comm,deptno) values((start+i),rand_string(6),’salesman’,0001,curdate(),2000,400,rand_num());
+Until i=max_num
+End repeat;
+Commit;
+End $$
+
+调用存储过程
+Call insert_emp(100,10)
+
+Show profile
+Show variables like ‘profiling’//默认关闭，使用前开启
+Set profiling=on;//开启
+
+
+Show profile cpu,block io for query 3;//查询query_id为3的记录cpu和IO的使用情况。
+结果参数
+Converting heap to myisam查询结果太大，内存不够用了往磁盘上转移了。
+Creating tmp table 创建临时表；拷贝数据到临时表，用完再删除；
+Copying to tmp table on disk把内存中临时表复制到磁盘，危险操作
+Locked
+
+全局查询日志：不要再生产环境开启这个功能
+1、在mysql的my.cnf中配置，开启general_log=1,
+记录日志文件的路径 general_log_file=/path/logfile
+输出格式：log_output=FILE
+2、命令行启用：set global general_log=1;
+Set global log_output=’TABLE’
+3、general_log表查看数据；
+事务的属性（ACID）：原子性（A）、一致性(C)、隔离性(I)、永久性(D)。
+原子性(Atomicity)：事务是一个原子作为操作单元，其对数据的修改，要么全部执行，要么全部不执行。
+一致性(Consistent):在事务开始和完成时，数据都必须保持一致状态。意味着所有相关的数据规则都必须应用于书屋的修改，以保持数据的完整性，书屋结束时，所有的内部数据结构（B树索引或双向链表）也都必须是正确的。
+隔离性(Isolation):数据库系统提供一定的隔离机制，保证事务在不受外部并发操作影响的“”独立“”环境执行。这意味着事务处理过程中的中间状态对外是不可见的，反之亦然。
+持久性（Durable）:事务完成之后，它对于数据的修改是永久性的，即使出现系统故障也能够保持。
+事务的隔离级别：读未提交、读已提交、可重复读、可串行化。
+
+并发处理带来的问题：
+1）更新丢失：两个事务同时操作相同的数据，后提交的事务会覆盖先提交的事务处理结果，通过乐观锁就可以解决。
+2）脏读：事务A读取到了事务B已经修改尚未提交的数据，如果B事务回滚，A读取的数据无效，不符合一致性。
+3）不可重复读：事务A读取到事务B已经提交的修改数据，但不符合隔离性。
+4）幻读：事务A读取到了事务B提交的新增数据，不符合隔离性。事务A新增了一条数据，事务B没有读取到，但是可以进行增删改操作。
+
+查看数据库的事务隔离级别 show variables like ‘tx_isolation’;
+设置事务隔离级别： set tx_isolation=’REPEATABLE-READ’;
+
+MVCC:会将第一次查询的数据做快照缓存，只有在涉及到增删改的操作后，该事务内容才会更新（幻读、可重复读）。
+读未提交（Read-uncommitted）：事务A和事务B同时查询一个数据表，如果A对表进行操作而未提交，B同时也可以读取到操作后的数据，如果A事务回滚，则B刚才读取的数据是无效的，如果在程序中执行，这条数据是错误的，形成脏读。
+读已提交（Read-committed）：事务A和事务B同时查询一个数据表，如果A对表进行操作并且提交，B获取的数据前后不一致，如果按照事务A执行前 的数据进行业务处理，现在获取的数据出现变化原有业务逻辑就会出现错误。
+可重复读(Repeatable-read)：多事务同时操作相同数据时，各事务以第一次查询的数据为基准，如果中间涉及到了增删改操作时，数据会以最新的为操作标准，并且查询数据也会变成最新的。
+可串行化（Serializable）:最高隔离级别，不会出现事务处理的各种问题，效率低下。
+
+Innodb的锁机制原理解析
+Show open tables；查看锁的情况
+Lock table mylock read,book write;//给mylock表增加读锁，给book表增加写锁。
+Unlock tables;//释放锁，解锁。
+
+表锁
+增加读锁以后，可以读但是不可以修改或者查询其他表。其他事务可以查询同一个表，但是修改会进程阻塞。
+增加写锁以后，可以读也可以修改，但是不可以查询其他表。其他事务可以不可以查询该表，会进程阻塞。
+简而意之，读锁会阻塞写，但是不会阻塞读，而写锁则会把读和写都堵塞。
+
+分析表锁定：show status like ‘table%’
+Table_locks_immediate:产生表级锁定的次数，标识可以立即获取锁的查询次数，每立即获取锁值加1；
+Table_locks_waited:出现表级锁定争用而发生的等待次数（不能立即获取锁的次数，每等待一次锁值增加一次），此值高则说明存在较严重的表级锁争用情况。
+此外，myisam的读写锁调度是写优先，这也是myisam不适合写为主表的引擎，因为写锁以后，其他线程不能做任何操作，大量的更新会使查询很难得到锁，从而造成永远阻塞。
+
+行锁
+行锁：是给索引上的索引项加锁，没有索引的列会被上表锁；
+Sql语句锁定单行：select * from tableName where id=10 for update;（面试题）
+索引失效会导致行锁变表锁。
+行锁之间各不干涉，可以同时操作，只要不是操作同一条数据。
+分析行锁定：show status like ‘tableName%’;
+Innodb_row_lock_current_waits:当前正在等待锁定的数量；
+Innodb_row_lock_time:从系统启动到现在锁定总时间长度；（等待的总时长）
+Innodb_row_lock_time_avg:每次等待所花的平均时间；(等待平均时长)
+Innodb_row_lock_time_max:从系统启动到现在等待最常的一次所花的时间；
+Innodb_row_lock_waits:系统启动后到现在总共等待的次数；（等待总次数）
+行锁优化建议：
+1、尽可能让所有数据检索都通过索引来完成，避免无索引行锁升级为表锁。
+2、合理设计索引，尽量缩小锁的范围；
+3、尽可能的较少的检索条件，避免间隙锁；
+4、尽量控制事务大小，减少锁定资源量和时间长度
+5、尽可能低级别事务隔离。
+
+
+锁：是协调多个进程或线程并发访问某一个资源的机制。
+表锁：偏向读，偏向myisam存储引擎，开销小，加锁快；无死锁；锁定粒度大，发生锁冲突的概率最高，并发度最低。
+行锁：偏向读，偏向innodb存储引擎，开销大，加锁慢，会出现死锁；锁定粒度最小，发生锁冲突的概率最低，并发度也最高。
+页锁：开销和加锁时间介于表锁和行锁之间，会出现死锁；锁定粒度介于表锁和行锁之间，并发度一般；
+间隙锁：当我们使用范围条件而不是相等条件检索数据，并请求共享锁或排他锁时，innoDb会给符合条件的已有数据记录的索引项加锁，对应键值在条件范围内但并不存在的记录，叫间隙锁。如果在使用间隙锁操作时，如果想要插入在锁定范围内的数据时，是不可行的。
+乐观锁
+悲观锁
+排他锁：X锁，写锁，一个事务修改被操作时，其他事务的任何操作都是错误的，不可进行。
+共享锁：S锁，读锁，sql语句后加lock  in share mode；大家都可以读，但是不可以修改。
+意向共享锁：是在拿共享锁之前
+意向排他锁：在拿排它锁之前。
+记录锁
+临键锁
+自增锁：特殊锁，就算记录被删除，那条ID 依然被占用；
+
+
+Mysql主从复制
+Mysql复制过程分为三步：
+1、master将改变的记录写到二进制日志(binary log)，这些记录的过程叫做二进制日志事件，binary log events；
+2、Slave将master的binary log events拷贝到它的中继日志(relay log);
+3、Slave重做中继日志中的事件，将改变应用到自己的数据库中，mysql复制是异步的且串行化的。
+复制的基本原则
+1、每个slave只有一个master
+2、每个slave只能有一个唯一的服务器ID
+3、每个master可以有多个salve
+
+复制的最大问题（延时）
+
+主从配置的条件：
+1、mysql版本一致且后台以服务运行
+2、主从都配置在【mysqld】节点下，都是小写
+3、主机修改my.ini配置文件
+1）【必须】主服务器唯一ID：server-id=1
+2）【必须】启用二进制日志：log-bin=本地路径/mysqlbin
+3）【可选】启用错误日志：log-err=本地路径/mysqlerr
+4）【可选】根目录：basedir=”本地路径”
+5）【可选】临时目录：tmpdir=”本地路径”
+6）【可选】数据目录:datadir=”本地路劲/data/”
+7）Read-only=0,主机，读写 都可以
+8）【可选】设置不要复制的数据库:binlog-ignore-db=mysql
+9）【可选】设置需要复制的数据库：binlog-do-db=需要复制的主数据库名字
+4、从机修改my.cnf配置文件
+1）【必须】从服务器的唯一ID：server-id=2;#server-id=1;
+2）【可选】启用二进制日志
+5、重启服务器
+6、主机从机都关闭防火墙
+7、在windows主机建立账号并授权slave
+1）grant replication slave on *.* to ‘user’@’192.x.x.x’ identified by ‘password’;
+2）刷新命令flush privileges;
+3）查询master状态:show master status;记录下FILE和position的值
+4）
+8、在linux从机上配置需要复制的
+9、主机建库、建表、insert记录，从机复制
+10、如何停止从服务复制：stop slave
